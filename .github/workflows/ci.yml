@@ -46,9 +46,11 @@ jobs:
           pip install -r "${{ steps.detect.outputs.requirements_path }}"
 
       - name: Run tests
-        env:
-          PYTHONPATH: ${{ steps.detect.outputs.pythonpath }}
-        run: pytest -q "${{ steps.detect.outputs.tests_path }}"
+        shell: bash
+        run: |
+          cd "${{ steps.detect.outputs.project_dir }}"
+          export PYTHONPATH="./src:."
+          pytest -q tests
 
   docker:
     name: Build (and optionally push) Docker image
