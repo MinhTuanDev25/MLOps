@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: churn-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    autoDeploy: false
+    healthCheckPath: /health
+    envVars:
+      - key: MODEL_PATH
+        value: /app/artifacts/best_model.pkl
+      - key: PREDICTION_LOG_PATH
+        value: /app/artifacts/prediction_log.csv
