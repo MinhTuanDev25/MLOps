@@ -1,0 +1,122 @@
+name: ci-cd
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect project paths
+        id: detect
+        shell: bash
+        run: |
+          if [ -f requirements.txt ]; then
+            echo "project_dir=." >> "$GITHUB_OUTPUT"
+            echo "requirements_path=requirements.txt" >> "$GITHUB_OUTPUT"
+            echo "tests_path=tests" >> "$GITHUB_OUTPUT"
+            echo "pythonpath=./src" >> "$GITHUB_OUTPUT"
+          elif [ -f MLDevops/requirements.txt ]; then
+            echo "project_dir=MLDevops" >> "$GITHUB_OUTPUT"
+            echo "requirements_path=MLDevops/requirements.txt" >> "$GITHUB_OUTPUT"
+            echo "tests_path=MLDevops/tests" >> "$GITHUB_OUTPUT"
+            echo "pythonpath=MLDevops/src" >> "$GITHUB_OUTPUT"
+          else
+            echo "Could not find requirements.txt in root or MLDevops/"
+            exit 1
+          fi
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r "${{ steps.detect.outputs.requirements_path }}"
+
+      - name: Run tests
+        shell: bash
+        run: |
+          cd "${{ steps.detect.outputs.project_dir }}"
+          export PYTHONPATH="./src:."
+          pytest -q tests
+
+  docker:
+    name: Build (and optionally push) Docker image
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect project paths
+        id: detect
+        shell: bash
+        run: |
+          if [ -f Dockerfile ]; then
+            echo "context_path=." >> "$GITHUB_OUTPUT"
+            echo "dockerfile_path=./Dockerfile" >> "$GITHUB_OUTPUT"
+          elif [ -f MLDevops/Dockerfile ]; then
+            echo "context_path=./MLDevops" >> "$GITHUB_OUTPUT"
+            echo "dockerfile_path=./MLDevops/Dockerfile" >> "$GITHUB_OUTPUT"
+          else
+            echo "Could not find Dockerfile in root or MLDevops/"
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}/churn-api
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Build and (conditionally) push image
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ steps.detect.outputs.context_path }}
+          file: ${{ steps.detect.outputs.dockerfile_path }}
+          push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  deploy-render:
+    name: Deploy to Render
+    needs: [test, docker]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Trigger Render deploy hook
+        env:
+          RENDER_DEPLOY_HOOK_URL: ${{ secrets.RENDER_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK_URL" ]; then
+            echo "Missing RENDER_DEPLOY_HOOK_URL secret"
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK_URL"
+
