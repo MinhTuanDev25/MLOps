@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from typing import Any, Dict
 
+import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.utils import resample
@@ -20,6 +21,7 @@ class PreparedData:
     y_test: pd.Series
     encoders: Dict[str, Dict[str, int]]
     train_reference_stats: Dict[str, float]
+    reference_histograms: Dict[str, Dict[str, Any]]
 
 
 def _fit_category_mapping(series: pd.Series) -> Dict[str, int]:
@@ -33,6 +35,17 @@ def _apply_mapping(series: pd.Series, mapping: Dict[str, int]) -> pd.Series:
         unknown = series[mapped.isnull()].astype(str).unique().tolist()
         raise ValueError(f"Unknown categories detected: {unknown}")
     return mapped.astype(int)
+
+
+def histogram_props(series: pd.Series, bins: int = 10) -> Dict[str, Any]:
+    values = series.astype(float).to_numpy()
+    counts, bin_edges = np.histogram(values, bins=bins)
+    total = counts.sum() or 1
+    proportions = (counts / total).astype(float).tolist()
+    return {
+        "bin_edges": bin_edges.astype(float).tolist(),
+        "proportions": proportions,
+    }
 
 
 def load_and_prepare_data(csv_path: str) -> PreparedData:
@@ -74,6 +87,11 @@ def load_and_prepare_data(csv_path: str) -> PreparedData:
         "balance_mean": float(X_train_balanced["Balance"].mean()),
     }
 
+    reference_histograms = {
+        "Age": histogram_props(X_train_balanced["Age"], bins=10),
+        "Balance": histogram_props(X_train_balanced["Balance"].astype(float), bins=10),
+    }
+
     return PreparedData(
         X_train=X_train_balanced,
         X_test=X_test,
@@ -81,6 +99,7 @@ def load_and_prepare_data(csv_path: str) -> PreparedData:
         y_test=y_test,
         encoders=encoders,
         train_reference_stats=train_reference_stats,
+        reference_histograms=reference_histograms,
     )
 
 

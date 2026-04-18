@@ -15,7 +15,7 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from churn_mldevops.config import MODEL_PATH, PREDICTION_LOG_PATH
-from churn_mldevops.monitoring import append_prediction_log, detect_basic_drift
+from churn_mldevops.monitoring import append_prediction_log, build_drift_report
 from churn_mldevops.pipeline import prepare_single_record
 
 
@@ -70,12 +70,31 @@ def predict(request: ChurnRequest) -> dict:
         proba = 1.0 / (1.0 + np.exp(-score))
 
     append_prediction_log(PREDICTION_LOG_PATH, payload, pred, proba)
-    drift = detect_basic_drift(payload, train_reference_stats)
+    reference_histograms = artifact.get("reference_histograms")
+    drift = build_drift_report(
+        payload,
+        train_reference_stats,
+        reference_histograms,
+        PREDICTION_LOG_PATH,
+    )
 
     return {
         "model_name": artifact["model_name"],
+        "model_version": (artifact.get("manifest") or {}).get("created_at_utc"),
         "prediction": pred,
         "probability_exited": round(proba, 6),
         "drift_check": drift,
+    }
+
+
+@app.get("/model-info")
+def model_info() -> dict:
+    artifact = _load_artifact()
+    manifest = artifact.get("manifest")
+    metrics = artifact.get("metrics")
+    return {
+        "model_name": artifact["model_name"],
+        "metrics": metrics,
+        "manifest": manifest,
     }
 
