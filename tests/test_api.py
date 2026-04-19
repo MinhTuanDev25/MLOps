@@ -39,6 +39,18 @@ def test_prometheus_metrics_endpoint() -> None:
     assert "churn_predictions_total" in body
 
 
+def test_metrics_json_endpoint() -> None:
+    client = TestClient(app)
+    client.post("/predict", json=VALID_PAYLOAD)
+    response = client.get("/metrics/json")
+    assert response.status_code == 200
+    data = response.json()
+    assert data.get("format") == "prometheus_registry_json"
+    assert "samples" in data
+    names = {s["name"] for s in data["samples"]}
+    assert "churn_predictions_total" in names
+
+
 def test_training_runs_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/training-runs?limit=3")

@@ -8,7 +8,7 @@ from typing import Literal
 import joblib
 import numpy as np
 from fastapi import FastAPI, HTTPException
-from prometheus_client import Counter
+from prometheus_client import REGISTRY, Counter
 from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -44,6 +44,31 @@ churn_drift_events_total = Counter(
 )
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics")
+
+
+def _registry_samples_as_json() -> list[dict]:
+    """Flat list of time series samples (for human/JSON clients; /metrics stays text for Prometheus)."""
+    out: list[dict] = []
+    for family in REGISTRY.collect():
+        for s in family.samples:
+            labels = {k: v for k, v in s.labels.items()} if s.labels else {}
+            out.append(
+                {
+                    "name": s.name,
+                    "labels": labels,
+                    "value": float(s.value),
+                }
+            )
+    return out
+
+
+@app.get("/metrics/json")
+def metrics_json() -> dict:
+    return {
+        "format": "prometheus_registry_json",
+        "note": "Use GET /metrics (text) for Prometheus scrapes; this route is for JSON clients.",
+        "samples": _registry_samples_as_json(),
+    }
 
 
 class ChurnRequest(BaseModel):
