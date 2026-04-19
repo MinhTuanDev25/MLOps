@@ -15,8 +15,8 @@ if str(_SRC) not in sys.path:
 _TEST_ART = tempfile.mkdtemp(prefix="churn_pytest_artifacts_")
 os.environ["ARTIFACTS_DIR"] = _TEST_ART
 os.environ["MODEL_PATH"] = str(Path(_TEST_ART) / "best_model.pkl")
-os.environ["PREDICTION_LOG_PATH"] = str(Path(_TEST_ART) / "prediction_log.csv")
 os.environ["DATA_PATH"] = str(_ROOT / "Churn_Modelling.csv")
+os.environ["DATABASE_URL"] = f"sqlite:///{Path(_TEST_ART, 'churn.db').resolve().as_posix()}"
 
 from churn_mldevops.train import train_and_save  # noqa: E402
 

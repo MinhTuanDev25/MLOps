@@ -1,30 +1,38 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
 import numpy as np
-import pandas as pd
+from sqlalchemy import desc, select
+from sqlalchemy.orm import Session
+
+from churn_mldevops.orm_models import Prediction
 
 
-def append_prediction_log(
-    log_path: Path, payload: dict, prediction: int, probability: float
+def append_prediction_row(
+    session: Session,
+    payload: dict,
+    prediction: int,
+    probability: float,
+    model_name: str,
 ) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    row = {
-        "timestamp_utc": datetime.now(timezone.utc).isoformat(),
-        **payload,
-        "prediction": int(prediction),
-        "probability_exited": float(probability),
-    }
-    df_new = pd.DataFrame([row])
-    if log_path.exists():
-        df_existing = pd.read_csv(log_path)
-        df = pd.concat([df_existing, df_new], ignore_index=True)
-    else:
-        df = df_new
-    df.to_csv(log_path, index=False)
+    row = Prediction(
+        credit_score=int(payload["CreditScore"]),
+        geography=str(payload["Geography"]),
+        gender=str(payload["Gender"]),
+        age=int(payload["Age"]),
+        tenure=int(payload["Tenure"]),
+        balance=float(payload["Balance"]),
+        num_of_products=int(payload["NumOfProducts"]),
+        has_cr_card=int(payload["HasCrCard"]),
+        is_active_member=int(payload["IsActiveMember"]),
+        estimated_salary=float(payload["EstimatedSalary"]),
+        prediction=int(prediction),
+        probability_exited=float(probability),
+        model_name=model_name,
+    )
+    session.add(row)
+    session.flush()
 
 
 def detect_basic_drift(latest_payload: dict, train_reference_stats: dict) -> dict:
@@ -53,19 +61,24 @@ def _proportions_with_bins(values: np.ndarray, bin_edges: list[float]) -> list[f
     return (counts / total).astype(float).tolist()
 
 
-def population_psi_vs_train(
-    log_path: Path,
+_PSI_COLUMN = {"Age": Prediction.age, "Balance": Prediction.balance}
+
+
+def population_psi_vs_train_db(
+    session: Session,
     column: str,
     reference_histogram: dict[str, Any],
     last_n: int = 200,
     min_rows: int = 30,
 ) -> float | None:
-    if not log_path.exists():
+    col = _PSI_COLUMN.get(column)
+    if col is None:
         return None
-    df = pd.read_csv(log_path)
-    if column not in df.columns or len(df) < min_rows:
+    stmt = select(col).order_by(desc(Prediction.id)).limit(last_n)
+    rows = session.scalars(stmt).all()
+    if len(rows) < min_rows:
         return None
-    window = df[column].astype(float).tail(last_n).to_numpy()
+    window = np.asarray(rows, dtype=float)
     ref_edges = reference_histogram["bin_edges"]
     ref_props = reference_histogram["proportions"]
     actual_props = _proportions_with_bins(window, ref_edges)
@@ -78,7 +91,7 @@ def build_drift_report(
     latest_payload: dict,
     train_reference_stats: dict,
     reference_histograms: dict[str, dict[str, Any]] | None,
-    log_path: Path,
+    session: Session,
     psi_threshold: float = 0.25,
     log_window: int = 200,
 ) -> dict[str, Any]:
@@ -91,7 +104,7 @@ def build_drift_report(
             hist = reference_histograms.get(col)
             if not hist:
                 continue
-            val = population_psi_vs_train(log_path, col, hist, last_n=log_window)
+            val = population_psi_vs_train_db(session, col, hist, last_n=log_window)
             psi_block[col] = val
             if val is not None and val > psi_threshold:
                 combined_flag = True

@@ -1,22 +1,23 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 
 import joblib
+from sqlalchemy import select
+
+from churn_mldevops.database import session_scope
+from churn_mldevops.orm_models import TrainingRun
 
 
-def test_manifest_and_metrics_written() -> None:
-    art = Path(os.environ["ARTIFACTS_DIR"])
-    assert (art / "manifest.json").exists()
-    assert (art / "metrics.json").exists()
-    manifest = json.loads((art / "manifest.json").read_text(encoding="utf-8"))
-    assert manifest["selection"]["primary_metric"] == "f1"
-    assert "data_sha256" in manifest
-    metrics = json.loads((art / "metrics.json").read_text(encoding="utf-8"))
-    assert "per_model" in metrics
-    assert len(metrics["per_model"]) >= 1
+def test_training_run_in_database() -> None:
+    with session_scope() as session:
+        row = session.scalars(select(TrainingRun).order_by(TrainingRun.id.desc())).first()
+    assert row is not None
+    assert row.manifest["selection"]["primary_metric"] == "f1"
+    assert "data_sha256" in row.manifest
+    assert isinstance(row.classification_reports, dict)
+    assert len(row.classification_reports) >= 1
 
 
 def test_model_load_and_predict() -> None:

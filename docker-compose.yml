@@ -1,19 +1,66 @@
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: churn-db
+    environment:
+      POSTGRES_USER: churn
+      POSTGRES_PASSWORD: churn
+      POSTGRES_DB: churn
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
   churn-api:
     build: .
     container_name: churn-api
+    restart: unless-stopped
     ports:
       - "8000:8000"
     environment:
       MODEL_PATH: /app/artifacts/best_model.pkl
-      PREDICTION_LOG_PATH: /app/artifacts/prediction_log.csv
+      DATABASE_URL: postgresql+psycopg2://churn:churn@db:5432/churn
       PORT: 8000
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 10s
+      start_period: 60s
     volumes:
       - ./artifacts:/app/artifacts
+    depends_on:
+      - db
 
+  prometheus:
+    image: prom/prometheus:v2.53.3
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    depends_on:
+      - churn-api
+
+  grafana:
+    image: grafana/grafana:11.5.2
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+    depends_on:
+      - prometheus
+
+volumes:
+  grafana-data: {}
+  postgres-data: {}
