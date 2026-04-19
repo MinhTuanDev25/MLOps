@@ -9,5 +9,3 @@ services:
     envVars:
       - key: MODEL_PATH
         value: /app/artifacts/best_model.pkl
-      - key: PREDICTION_LOG_PATH
-        value: /app/artifacts/prediction_log.csv

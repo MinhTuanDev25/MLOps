@@ -29,6 +29,26 @@ def test_health_endpoint() -> None:
     assert response.json()["status"] == "ok"
 
 
+def test_prometheus_metrics_endpoint() -> None:
+    client = TestClient(app)
+    client.post("/predict", json=VALID_PAYLOAD)
+    response = client.get("/metrics")
+    assert response.status_code == 200
+    body = response.text
+    assert "http_requests_total" in body or "http_request_duration" in body
+    assert "churn_predictions_total" in body
+
+
+def test_training_runs_endpoint() -> None:
+    client = TestClient(app)
+    response = client.get("/training-runs?limit=3")
+    assert response.status_code == 200
+    body = response.json()
+    assert "runs" in body
+    assert len(body["runs"]) >= 1
+    assert body["runs"][0]["manifest"]["selection"]["primary_metric"] == "f1"
+
+
 def test_model_info_endpoint() -> None:
     client = TestClient(app)
     response = client.get("/model-info")

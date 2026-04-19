@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import os
 import subprocess
 from datetime import datetime, timezone
@@ -23,6 +22,8 @@ from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier
 
 from churn_mldevops.config import ARTIFACTS_DIR, DATA_PATH, MODEL_PATH
+from churn_mldevops.database import init_db, session_scope
+from churn_mldevops.orm_models import TrainingRun
 from churn_mldevops.pipeline import load_and_prepare_data
 
 
@@ -93,6 +94,7 @@ def _pick_best_model(per_model: dict[str, dict[str, float]]) -> str:
 
 
 def train_and_save() -> None:
+    init_db()
     prepared = load_and_prepare_data(str(DATA_PATH))
 
     models = {
@@ -140,10 +142,6 @@ def train_and_save() -> None:
         "best_test_metrics": best_metrics,
         "all_test_metrics": per_model_scores,
     }
-    manifest_path = ARTIFACTS_DIR / "manifest.json"
-    with open(manifest_path, "w", encoding="utf-8") as f:
-        json.dump(manifest, f, indent=2)
-
     artifact = {
         "model": best_model,
         "model_name": best_model_name,
@@ -156,21 +154,18 @@ def train_and_save() -> None:
     }
     joblib.dump(artifact, MODEL_PATH)
 
-    with open(ARTIFACTS_DIR / "metrics.json", "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "per_model": per_model_scores,
-                "reports": reports,
-                "selection": manifest["selection"],
-            },
-            f,
-            indent=2,
+    with session_scope() as session:
+        session.add(
+            TrainingRun(
+                manifest=manifest,
+                classification_reports=reports,
+            )
         )
 
     print(f"Best model (by F1, then ROC-AUC, then AP): {best_model_name}")
     print(f"Best metrics: {best_metrics}")
     print(f"Saved artifact: {MODEL_PATH}")
-    print(f"Manifest: {manifest_path}")
+    print("Training run stored in database (table training_runs).")
 
 
 if __name__ == "__main__":

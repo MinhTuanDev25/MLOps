@@ -1,25 +1,49 @@
 from __future__ import annotations
 
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Literal
 
 import joblib
 import numpy as np
 from fastapi import FastAPI, HTTPException
+from prometheus_client import Counter
+from prometheus_fastapi_instrumentator import Instrumentator
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 ROOT_DIR = Path(__file__).resolve().parent
 SRC_DIR = ROOT_DIR / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from churn_mldevops.config import MODEL_PATH, PREDICTION_LOG_PATH
-from churn_mldevops.monitoring import append_prediction_log, build_drift_report
+from churn_mldevops.config import MODEL_PATH
+from churn_mldevops.database import init_db, session_scope
+from churn_mldevops.monitoring import append_prediction_row, build_drift_report
+from churn_mldevops.orm_models import TrainingRun
 from churn_mldevops.pipeline import prepare_single_record
 
 
-app = FastAPI(title="Churn Prediction API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="Churn Prediction API", version="1.0.0", lifespan=lifespan)
+
+churn_predictions_total = Counter(
+    "churn_predictions_total",
+    "Churn predictions by model and predicted class",
+    ["model_name", "exited"],
+)
+churn_drift_events_total = Counter(
+    "churn_drift_events_total",
+    "Requests where drift_flag evaluated true (rules or PSI)",
+)
+
+Instrumentator().instrument(app).expose(app, endpoint="/metrics")
 
 
 class ChurnRequest(BaseModel):
@@ -69,14 +93,28 @@ def predict(request: ChurnRequest) -> dict:
         score = float(model.decision_function(X)[0])
         proba = 1.0 / (1.0 + np.exp(-score))
 
-    append_prediction_log(PREDICTION_LOG_PATH, payload, pred, proba)
     reference_histograms = artifact.get("reference_histograms")
-    drift = build_drift_report(
-        payload,
-        train_reference_stats,
-        reference_histograms,
-        PREDICTION_LOG_PATH,
-    )
+
+    with session_scope() as session:
+        append_prediction_row(
+            session,
+            payload,
+            pred,
+            proba,
+            str(artifact["model_name"]),
+        )
+        drift = build_drift_report(
+            payload,
+            train_reference_stats,
+            reference_histograms,
+            session,
+        )
+
+    churn_predictions_total.labels(
+        model_name=str(artifact["model_name"]), exited=str(pred)
+    ).inc()
+    if drift.get("drift_flag"):
+        churn_drift_events_total.inc()
 
     return {
         "model_name": artifact["model_name"],
@@ -98,3 +136,24 @@ def model_info() -> dict:
         "manifest": manifest,
     }
 
+
+@app.get("/training-runs")
+def training_runs(limit: int = 10) -> dict:
+    """Latest training runs persisted in DB (manifest includes per-model metrics)."""
+    lim = max(1, min(limit, 50))
+    with session_scope() as session:
+        rows = session.scalars(
+            select(TrainingRun).order_by(TrainingRun.id.desc()).limit(lim)
+        ).all()
+    return {
+        "runs": [
+            {
+                "id": r.id,
+                "created_at": r.created_at.isoformat(),
+                "best_model": r.manifest.get("selection", {}).get("best_model"),
+                "manifest": r.manifest,
+                "classification_reports": r.classification_reports,
+            }
+            for r in rows
+        ]
+    }

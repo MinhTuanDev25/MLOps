@@ -12,6 +12,9 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
+# artifacts/ is often gitignored — create dir so SQLite can create churn.db during train.
+RUN mkdir -p /app/artifacts
+
 # Build-time training so deployed image always contains a model artifact.
 RUN python train.py
 
