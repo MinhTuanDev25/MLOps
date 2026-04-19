@@ -9,7 +9,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from churn_mldevops.config import DATABASE_URL
+from churn_mldevops.config import ARTIFACTS_DIR, DATABASE_URL
 from churn_mldevops.orm_models import Base
 
 _engine: Engine | None = None
@@ -36,6 +36,9 @@ def get_session_factory() -> sessionmaker[Session]:
 
 
 def init_db() -> None:
+    # SQLite cannot create churn.db if the parent directory does not exist (e.g. Docker build).
+    if DATABASE_URL.startswith("sqlite"):
+        ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=get_engine())
 
 
