@@ -2,6 +2,8 @@
 
 Đồ án / lab **MLOps**: dự đoán **churn** trên `Churn_Modelling.csv` — **train** (nhiều model sklearn, chọn theo F1) → **artifact** `best_model.pkl` + **lịch sử train trong DB** → **FastAPI** → **ghi predictions vào DB** + **drift (rule + PSI)** → **PostgreSQL** (Compose) hoặc **SQLite** (local mặc định) → **Docker** → **GitHub Actions** (pytest, build image, deploy hook).
 
+**Sơ đồ slide (kiến trúc, pipeline, API, Docker, CI/CD):** [`docs/ARCHITECTURE_DIAGRAMS.md`](docs/ARCHITECTURE_DIAGRAMS.md)
+
 ---
 
 ## Kiến trúc tóm tắt
@@ -46,7 +48,8 @@ uvicorn app:app --reload --port 8000
 - **Dự đoán:** `POST /predict`  
 - **Metadata model:** `GET /model-info` (manifest + metric — lấy từ artifact đang serve)  
 - **Lịch sử train (DB):** `GET /training-runs`  
-- **Prometheus:** `GET /metrics` (chuẩn exposition text)
+- **Prometheus scrape:** `GET /metrics` (**text/plain**, chuẩn Prometheus)
+- **Metrics dạng JSON:** `GET /metrics/json` (cùng registry; tiện browser/demo — Prometheus vẫn dùng `/metrics`)
 
 ---
 
